@@ -1,8 +1,8 @@
 # pyspark-yelp-project
 
-Dataset from :
+Dataset from : https://www.yelp.com/dataset
 <br>
-https://www.yelp.com/dataset/documentation/main
+Download dataset : https://drive.google.com/file/d/11ytwbaTnarxVHvSmHmKucbykR59-jPT4/view?usp=share_link
 
 Install PySpark :
 <br>
