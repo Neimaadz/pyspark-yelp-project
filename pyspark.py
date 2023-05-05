@@ -17,7 +17,7 @@ conf = SparkConf().setAppName("MyApp") \
     # .set("spark.memory.offHeap.size","4g") \
 
 # /!\ ***** TO MODIFY ***** /!\
-dataset_path = 'C:/Users/Damien/Downloads/yelp_dataset/yelp_dataset_splitted'
+dataset_path = '/Users/Damien/Downloads/yelp_dataset_splitted'
 # /!\ ***** TO MODIFY ***** /!\
     
 def getDifferentCategoryBusiness(spark):
