@@ -2,7 +2,7 @@ import sys
 sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf8', buffering=1)
 
 import findspark
-findspark.init('C:/devtools/spark-3.4.0-bin-hadoop3/')
+findspark.init()
 from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 from pyspark.sql import functions as F
@@ -16,8 +16,10 @@ conf = SparkConf().setAppName("MyApp") \
     # .set("spark.memory.offHeap.enabled","true") \
     # .set("spark.memory.offHeap.size","4g") \
 
+# /!\ ***** TO MODIFY ***** /!\
 dataset_path = 'C:/Users/Damien/Downloads/yelp_dataset/yelp_dataset_splitted'
-
+# /!\ ***** TO MODIFY ***** /!\
+    
 def getDifferentCategoryBusiness(spark):
     json_schema = StructType([
         StructField('business_id', StringType()),
@@ -67,8 +69,6 @@ def main():
     # getMostCommonUserName(spark)
     print("Get Different Category Business")
     getDifferentCategoryBusiness(spark)
-    
-    sys.stdout = sys.__stdout__
 
 if __name__ == "__main__":
     main()
