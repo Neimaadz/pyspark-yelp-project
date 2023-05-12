@@ -1,12 +1,11 @@
+import ast
+import json
 import sys
 sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf8', buffering=1)
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
-from neo4j import GraphDatabase
-import logging
-from neo4j.exceptions import ServiceUnavailable
 
 import findspark
 findspark.init()
@@ -14,6 +13,8 @@ from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
+from py2neo import Graph
+from py2neo.bulk import create_nodes
 
 
 # Create a SparkConf object
@@ -30,32 +31,14 @@ dataset_path = '/Users/Damien/Downloads/yelp_dataset_splitted'
 
 
 class App:
-    def __init__(self, uri, user, password, spark):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+    def __init__(self, py2neo: Graph, spark: SparkSession):
+        self.py2neo = py2neo
         self.spark = spark
-
-    def close(self):
-        self.driver.close()
-
-    def execute_query(self, query, parameters):
-        with self.driver.session(database="neo4j") as session:
-            # Write transactions allow the driver to handle retries and transient errors
-            session.execute_write(self._execute_query, query, parameters)
-            
-    @staticmethod
-    def _execute_query(tx, query, parameters):
-        tx.run(query, parameters)
-        try:
-            return True
-        # Capture any errors along with the query and data for traceability
-        except ServiceUnavailable as exception:
-            logging.error("{query} raised an error: \n {exception}".format(
-                query=query, exception=exception))
-            raise
 
     def getDifferentCategoryBusiness(self):
         spark = self.spark
         json_schema = StructType([
+            StructField('business_id', StringType()),
             StructField('name', StringType()),
             StructField('categories', StringType())
         ])
@@ -78,20 +61,17 @@ class App:
         df5_sorted_desc.show()
         # Get specific category
         # df5.filter(F.col("category") == "Hostels").show()
-        
         differentCategoryBusinessList = df5_sorted_desc.select("category", "occurence").collect()
         differentCategoryBusinesses = [differentCategoryBusiness for differentCategoryBusiness in differentCategoryBusinessList]
         
-        app.execute_query(("MATCH (n:DifferentCategoryBusiness) DELETE n"), None)
-        query = (
-            "CREATE (p1:DifferentCategoryBusiness { category: $category, occurence_category: $category_occur })"
-        )
+        self.py2neo.run("MATCH (n:DifferentCategoryBusiness) DELETE n")
+        query = ("CREATE (p1:DifferentCategoryBusiness { category: $category, occurence_category: $category_occur })")
         for differentCategoryBusiness in differentCategoryBusinesses[:10]:
             params = {
                 "category": differentCategoryBusiness.category,
                 "category_occur": differentCategoryBusiness.occurence
                 }
-            app.execute_query(query, params)
+            self.py2neo.run(query, params)
         
     def getMostCommonUserName(self):
         spark = self.spark
@@ -107,18 +87,16 @@ class App:
         df2_sorted_desc = df2.sort(F.desc("occurence"))
         df2_sorted_desc.show()
         commonUserNameList = df2_sorted_desc.select("name", "occurence").collect()
-        
         commonUserNames = [commonUserName for commonUserName in commonUserNameList]
-        app.execute_query(("MATCH (n:MostCommonUserName) DELETE n"), None)
-        query = (
-            "CREATE (p1:MostCommonUserName { name: $name, occurence_name: $name_occur })"
-        )
+        
+        self.py2neo.run("MATCH (n:MostCommonUserName) DELETE n")
+        query = ("CREATE (p1:MostCommonUserName { name: $name, occurence_name: $name_occur })")
         for commonUserName in commonUserNames[:10]:
             params = {
                 "name": commonUserName.name,
                 "name_occur": commonUserName.occurence
                 }
-            app.execute_query(query, params)
+            self.py2neo.run(query, params)
         
     def getMostUsedCommonWord(self):
         spark = self.spark
@@ -169,6 +147,39 @@ class App:
         df3_filtered_by_city.show()
         # print(df2_sorted.count()) # result count = 977096
         # print(df3_filtered_by_city.count()) # result count = 43600
+        popularityBusinessesList = df3_filtered_by_city.collect()
+        popularityBusinesses = [popularityBusiness for popularityBusiness in popularityBusinessesList]
+        popBusinesses = []
+        popBusiness = {}
+        avg_reviews = []
+        avg_review = {}
+        oldPopularityBusinessId = popularityBusinesses[0].business_id
+        for popularityBusiness in popularityBusinesses:
+            if oldPopularityBusinessId != popularityBusiness.business_id:
+                popBusiness['avg_reviews'] = str(avg_reviews)
+                popBusinesses.append(popBusiness)
+                popBusiness = {}
+                avg_reviews = []
+                oldPopularityBusinessId = popularityBusiness.business_id
+            
+            popBusiness['business_id'] = popularityBusiness.business_id
+            popBusiness['city'] = popularityBusiness.city
+            popBusiness['review_count'] = popularityBusiness.review_count
+            avg_review['year'] = popularityBusiness.year
+            avg_review['average_stars'] = popularityBusiness.average_stars
+            avg_reviews.append(avg_review)
+            avg_review = {}
+            
+        self.py2neo.run("MATCH (n:AveragePopularityByYearForGivenCity) DELETE n")
+        create_nodes(self.py2neo.auto(), popBusinesses, labels={"AveragePopularityByYearForGivenCity"})
+        
+        # result = self.py2neo.run("MATCH (n:AveragePopularityByYearForGivenCity WHERE n.review_count = 4554) RETURN n;").data()
+        # print(result.business_id)
+        # for res in result:
+        #     print(res['business_id'])
+        #     res._properties["avg_reviews"] = ast.literal_eval(res._properties["avg_reviews"])
+        #     for r in res['avg_reviews']:
+        #         print(r['year'])
 
 
 
@@ -180,12 +191,12 @@ if __name__ == "__main__":
     .builder \
     .config(conf=conf) \
     .getOrCreate()
-    
     # Aura queries use an encrypted connection using the "neo4j+s" URI scheme
     uri = os.getenv('NEO4J_URI')
     user = os.getenv('NEO4J_USERNAME')
     password = os.getenv('NEO4J_PASSWORD')
-    app = App(uri, user, password, spark)
+    py2neo = Graph(uri, auth=(user, password))
+    app = App(py2neo, spark)
     
     # print("Get Most Common User Name")
     # app.getMostCommonUserName()
@@ -196,4 +207,4 @@ if __name__ == "__main__":
     print("Get Average Popularity By Year")
     app.getAveragePopularityByYearForGivenCity("New Orleans")
     
-    app.close()
+    # app.close()
