@@ -18,6 +18,7 @@ from py2neo import Graph
 from py2neo.bulk import create_nodes
 
 
+
 # Create a SparkConf object
 conf = SparkConf().setAppName("MyApp") \
     .setMaster("local[*]") \
@@ -29,7 +30,6 @@ conf = SparkConf().setAppName("MyApp") \
 # /!\ ***** TO MODIFY ***** /!\
 dataset_path = '/Users/Damien/Downloads/yelp_dataset_splitted'
 # /!\ ***** TO MODIFY ***** /!\
-
 
 class App:
     def __init__(self, py2neo: Graph, spark: SparkSession):
