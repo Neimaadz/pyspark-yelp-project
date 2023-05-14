@@ -13,6 +13,7 @@ from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
+from pyspark.sql.window import Window
 from py2neo import Graph
 from py2neo.bulk import create_nodes
 
@@ -35,6 +36,7 @@ class App:
         self.py2neo = py2neo
         self.spark = spark
 
+
     def getDifferentCategoryBusiness(self):
         spark = self.spark
         json_schema = StructType([
@@ -50,17 +52,18 @@ class App:
         df2.show()
         # Creates a row for each element in the array and creates two columns 'pos' to hold the position of
         # the array element and the 'col' to hold the actual array value
-        df3 = df2.select(F.col("name"), F.col("business_id"), df2.categoryArray, F.posexplode(df2.categoryArray)).withColumnRenamed("col", "category")
+        df3 = df2.select(F.col("name"), F.col("business_id"), F.col("categoryArray"), F.posexplode(F.col("categoryArray"))).withColumnRenamed("col", "category")
         df3.printSchema()
         df3.show()
         # Get the numbers of different categories
-        df4 = df3.withColumn("category", F.trim(df3.category)) # Remove white space
+        df4 = df3.withColumn("category", F.trim(F.col("category"))) # Remove white space
         df4.agg(F.countDistinct("category"))
         df5 = df4.groupBy("category").count().withColumnRenamed("count", "occurence")
         df5_sorted_desc = df5.sort(F.desc("occurence"))
         df5_sorted_desc.show()
         # Get specific category
         # df5.filter(F.col("category") == "Hostels").show()
+        
         differentCategoryBusinessList = df5_sorted_desc.select("category", "occurence").collect()
         differentCategoryBusinesses = [differentCategoryBusiness for differentCategoryBusiness in differentCategoryBusinessList]
         
@@ -73,6 +76,7 @@ class App:
                 }
             self.py2neo.run(query, params)
         
+    
     def getMostCommonUserName(self):
         spark = self.spark
         # Define data types
@@ -98,6 +102,7 @@ class App:
                 }
             self.py2neo.run(query, params)
         
+    
     def getMostUsedCommonWord(self):
         spark = self.spark
         json_schema = StructType([
@@ -108,14 +113,15 @@ class App:
 
         df2 = df.withColumn("text", F.regexp_replace(F.col("text"), "[^0-9a-zA-Z\s$]+", ""))
         df2 = df2.select(F.col("text"), F.split(F.col("text"),"\s+|,\s+").alias("textArray")).drop("text")
-        df3 = df2.select(df2.textArray, F.posexplode(df2.textArray)).withColumnRenamed("col", "text")
-        df4 = df3.withColumn("text", F.lower(F.trim(df3.text))) # To lower and remove white space
+        df3 = df2.select(F.col("textArray"), F.posexplode(F.col("textArray"))).withColumnRenamed("col", "text")
+        df4 = df3.withColumn("text", F.lower(F.trim(F.col("text")))) # To lower and remove white space
         df4.agg(F.countDistinct("text"))
         df5 = df4.groupBy("text").count().withColumnRenamed("count", "occurence")
         df5_sorted_desc = df5.sort(F.desc("occurence"))
         df5_sorted_desc.show()
 
-    def getAveragePopularityByYearForGivenCity(self, city):
+
+    def getTop10AveragePopularityByYearForCity(self):
         spark = self.spark
         review_schema = StructType([
             StructField('business_id', StringType()),
@@ -134,20 +140,27 @@ class App:
         
         # Add new col named "year" by setting the year of col date
         df_review = df_review.withColumn("year", F.year("date"))
-        # df_review.show()
         # Inner Join between DF review and DF business based on business_id
         df_review = df_review.join(df_business, df_review.business_id == df_business.business_id, "inner").drop(df_business.business_id)
-        # df_review.show()
         # Group by needed cols and use agg(..) function to rename results of avg(..) by using alias(..)
         df2 = df_review.groupBy("business_id", "year", "review_count", "city").agg(F.avg("stars").alias("average_stars"))
-        df2_sorted = df2.sort(F.col("review_count").desc(), F.col("year").asc())
-        # df2_sorted.show()
-        df3_filtered_by_city = df2_sorted.filter(F.col("city") == city)
-        df3_filtered_by_city.printSchema()
-        df3_filtered_by_city.show()
-        # print(df2_sorted.count()) # result count = 977096
-        # print(df3_filtered_by_city.count()) # result count = 43600
-        popularityBusinessesList = df3_filtered_by_city.collect()
+        windowSpec = Window.partitionBy("city").orderBy(F.col("review_count").desc())
+        df3 = df2.withColumn("dense_rank", F.dense_rank().over(windowSpec))
+        df3_sorted = df3.sort(F.col("review_count").desc(), F.col("year").asc())
+        df3_sorted.show()
+        
+        rdd = [(spark.sparkContext.range(1, 11).collect())]
+        df_top_rank = spark.createDataFrame(rdd, ArrayType(IntegerType())).withColumnRenamed("value", "top_rank")
+        
+        df4 = df_business.select(F.col("city")).distinct()
+        df5 = df4.join(df_top_rank)
+        df6 = df5.select(F.col("city"), F.col("top_rank"), F.explode(F.col("top_rank"))).withColumnRenamed("col", "rank").drop(F.col("top_rank"))
+        df6.show()
+        df_res_top10 = df3_sorted.join(df6, (df3_sorted.city == df6.city) & (df3_sorted.dense_rank == df6.rank), "inner").drop(df3_sorted.dense_rank, df3_sorted.city)
+        df_res_top10.printSchema()
+        df_res_top10.sort(F.col("city")).show()
+        
+        popularityBusinessesList = df_res_top10.collect()
         popularityBusinesses = [popularityBusiness for popularityBusiness in popularityBusinessesList]
         popBusinesses = []
         popBusiness = {}
@@ -165,15 +178,16 @@ class App:
             popBusiness['business_id'] = popularityBusiness.business_id
             popBusiness['city'] = popularityBusiness.city
             popBusiness['review_count'] = popularityBusiness.review_count
+            popBusiness['rank'] = popularityBusiness.rank
             avg_review['year'] = popularityBusiness.year
             avg_review['average_stars'] = popularityBusiness.average_stars
             avg_reviews.append(avg_review)
             avg_review = {}
             
-        self.py2neo.run("MATCH (n:AveragePopularityByYearForGivenCity) DELETE n")
-        create_nodes(self.py2neo.auto(), popBusinesses, labels={"AveragePopularityByYearForGivenCity"})
+        self.py2neo.run("MATCH (n:Top10AveragePopularityByYearForCity) DELETE n")
+        create_nodes(self.py2neo.auto(), popBusinesses, labels={"Top10AveragePopularityByYearForCity"})
         
-        # result = self.py2neo.run("MATCH (n:AveragePopularityByYearForGivenCity WHERE n.review_count = 4554) RETURN n;").data()
+        # result = self.py2neo.run("MATCH (n:Top10AveragePopularityByYearForCity WHERE n.review_count = 4554) RETURN n;").data()
         # print(result.business_id)
         # for res in result:
         #     print(res['business_id'])
@@ -187,10 +201,11 @@ class App:
 
 
 if __name__ == "__main__":
-    spark = SparkSession \
+    spark: SparkSession = SparkSession \
     .builder \
     .config(conf=conf) \
     .getOrCreate()
+    
     # Aura queries use an encrypted connection using the "neo4j+s" URI scheme
     uri = os.getenv('NEO4J_URI')
     user = os.getenv('NEO4J_USERNAME')
@@ -204,7 +219,7 @@ if __name__ == "__main__":
     # app.getDifferentCategoryBusiness()
     # print("Most Used Common word for a review")
     # app.getMostUsedCommonWord()
-    print("Get Average Popularity By Year")
-    app.getAveragePopularityByYearForGivenCity("New Orleans")
+    print("Get Top10 Average Popularity By Year For a City")
+    app.getTop10AveragePopularityByYearForCity()
     
     # app.close()
