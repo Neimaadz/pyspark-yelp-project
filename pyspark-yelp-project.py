@@ -130,6 +130,7 @@ class App:
         ])
         business_schema = StructType([
             StructField('business_id', StringType()),
+            StructField('name', StringType()),
             StructField('city', StringType()),
             StructField('review_count', IntegerType()),
         ])
@@ -143,7 +144,7 @@ class App:
         # Inner Join between DF review and DF business based on business_id
         df_review = df_review.join(df_business, df_review.business_id == df_business.business_id, "inner").drop(df_business.business_id)
         # Group by needed cols and use agg(..) function to rename results of avg(..) by using alias(..)
-        df2 = df_review.groupBy("business_id", "year", "review_count", "city").agg(F.avg("stars").alias("average_stars"))
+        df2 = df_review.groupBy("business_id", "name", "year", "review_count", "city").agg(F.avg("stars").alias("average_stars"))
         windowSpec = Window.partitionBy("city").orderBy(F.col("review_count").desc())
         df3 = df2.withColumn("dense_rank", F.dense_rank().over(windowSpec))
         df3_sorted = df3.sort(F.col("review_count").desc(), F.col("year").asc())
@@ -176,6 +177,7 @@ class App:
                 oldPopularityBusinessId = popularityBusiness.business_id
             
             popBusiness['business_id'] = popularityBusiness.business_id
+            popBusiness['name'] = popularityBusiness.name
             popBusiness['city'] = popularityBusiness.city
             popBusiness['review_count'] = popularityBusiness.review_count
             popBusiness['rank'] = popularityBusiness.rank
